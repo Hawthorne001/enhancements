@@ -58,7 +58,7 @@ If none of those approvers are still appropriate, then changes to that list
 should be approved by the remaining approvers and/or the owning SIG (or
 SIG Architecture for cross-cutting KEPs).
 -->
-# KEP-4322: Inventory Cluster API
+# KEP-4322: ClusterProfile API
 
 <!--
 This is the title of your KEP. Keep it short, simple, and descriptive. A good
@@ -88,7 +88,12 @@ tags, and then generate with `hack/update-toc.sh`.
     - [Story 1: Multicluster Workload Distribution](#story-1-multicluster-workload-distribution)
     - [Story 2: Operations and Management](#story-2-operations-and-management)
     - [Story 3: Transparent to Consumers](#story-3-transparent-to-consumers)
-  - [Notes/Constraints/Caveats (Optional)](#notesconstraintscaveats-optional)
+  - [Notes/Constraints/Caveats](#notesconstraintscaveats)
+    - [What's the relationship between the ClusterProfile API and Cluster Inventory?](#whats-the-relationship-between-the-clusterprofile-api-and-cluster-inventory)
+    - [What's the relationship between a cluster inventory and clusterSet?](#whats-the-relationship-between-a-cluster-inventory-and-clusterset)
+    - [How should the API be consumed?](#how-should-the-api-be-consumed)
+    - [How should we organize ClusterProfile objects on a hub cluster?](#how-should-we-organize-clusterprofile-objects-on-a-hub-cluster)
+    - [Uniqueness of the ClusterProfile object](#uniqueness-of-the-clusterprofile-object)
   - [Risks and Mitigations](#risks-and-mitigations)
 - [Design Details](#design-details)
   - [Cluster Name](#cluster-name)
@@ -101,6 +106,11 @@ tags, and then generate with `hack/update-toc.sh`.
     - [Version](#version)
     - [Properties](#properties)
     - [Conditions](#conditions)
+  - [Cluster Access](#cluster-access)
+    - [Pull Model with Work API](#pull-model-with-work-api)
+    - [Push Model with Identity Federation (Recommended)](#push-model-with-identity-federation-recommended)
+    - [Push Model via Credentials in Secret (Not Recommended)](#push-model-via-credentials-in-secret-not-recommended)
+      - [Secret format](#secret-format)
 - [API Example](#api-example)
   - [Scalability implication](#scalability-implication)
   - [Test Plan](#test-plan)
@@ -124,6 +134,15 @@ tags, and then generate with `hack/update-toc.sh`.
 - [Implementation History](#implementation-history)
 - [Drawbacks](#drawbacks)
 - [Alternatives](#alternatives)
+  - [Extending Cluster API <code>Cluster</code> resource](#extending-cluster-api-cluster-resource)
+  - [ClusterProfile CRD scope](#clusterprofile-crd-scope)
+    - [Global hub cluster for multiple clustersets](#global-hub-cluster-for-multiple-clustersets)
+    - [Global hub cluster per clusterset](#global-hub-cluster-per-clusterset)
+    - [Regional hub cluster for multiple clustersets](#regional-hub-cluster-for-multiple-clustersets)
+    - [Regional hub clusters per clusterset](#regional-hub-clusters-per-clusterset)
+    - [Self-assembling clustersets](#self-assembling-clustersets)
+    - [Workload placement across multiple clusters <em>without</em> cross-cluster service networking](#workload-placement-across-multiple-clusters-without-cross-cluster-service-networking)
+    - [Workload placement into a specific clusterset](#workload-placement-into-a-specific-clusterset)
 - [Infrastructure Needed (Optional)](#infrastructure-needed-optional)
 <!-- /toc -->
 
@@ -150,7 +169,7 @@ Items marked with (R) are required *prior to targeting to a milestone / release*
 - [ ] (R) Design details are appropriately documented
 - [ ] (R) Test plan is in place, giving consideration to SIG Architecture and SIG Testing input (including test refactors)
   - [ ] e2e Tests for all Beta API Operations (endpoints)
-  - [ ] (R) Ensure GA e2e tests meet requirements for [Conformance Tests](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/conformance-tests.md) 
+  - [ ] (R) Ensure GA e2e tests meet requirements for [Conformance Tests](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/conformance-tests.md)
   - [ ] (R) Minimum Two Week Window for GA e2e tests to prove flake free
 - [ ] (R) Graduation criteria is in place
   - [ ] (R) [all GA Endpoints](https://github.com/kubernetes/community/pull/1806) must be hit by [Conformance Tests](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/conformance-tests.md) 
@@ -193,9 +212,10 @@ updates.
 Currently, there is a lack of a standardized approach to define a
 cluster inventory. However, with the growing number of users managing
 multiple clusters and deploying applications across them, projects like
-Open Cluster Management (OCM), Karmada, Clusternet, and Fleet Manager
+[Open Cluster Management (OCM)](https://open-cluster-management.io/),
+[Clusternet](https://clusternet.io/), [Kubernetes Fleet Manager](https://github.com/Azure/fleet) or [Karmada](https://karmada.io/)
 have emerged. This document introduces a proposal for a new universal
-inventory cluster API. The objective is to establish a shared interface
+ClusterProfile API. The objective is to establish a shared interface
 for cluster inventory, defining a standard for status reporting while
 allowing for multiple implementations.
 
@@ -220,7 +240,7 @@ solutions, we believe that it is critical to devise a common API where
 applications, toolsets, and human operators can easily discover clusters
 under management.
 
-By adopting this new inventory cluster API, consumers no longer need to
+By adopting this new ClusterProfile API, consumers no longer need to
 concern themselves with the implementation details of various projects.
 Instead, they can leverage a foundational API for multi-cluster
 management. Examples of consumers includes:
@@ -229,13 +249,13 @@ management. Examples of consumers includes:
   distributing application/workload to multiple clusters. The scheduling
   can be based on certain cluster properties, e.g. cloud the cluster
   resides in, resources a cluster provides, or latency to some external
-  endpoints. A common inventory cluster API will give schedulers a
+  endpoints. A common ClusterProfile API will give schedulers a
   standard to reason about clusters and help to foster the growth of
   this area.
 * GitOps tools (ArgoCD, flux etc) are having the requirement to deploy
   workload to multiple clusters. They either need to build the cluster
-  concept by themselves or understand cluster API from each different
-  cluster management project. A common inventory cluster API can provide
+  concept by themselves or understand APIs representing a cluster from each 
+  cluster management project. A common ClusterProfile API can provide
   a thin compatible layer for different projects.
 * Operation tools or customized external consumers: this API gives a
   common way for different clouds and vendors to define clusters,
@@ -250,7 +270,7 @@ List the specific goals of the KEP. What is it trying to achieve? How will we
 know that this has succeeded?
 -->
 
-* Establish a standardized inventory cluster API to represent clusters.
+* Establish a standardized ClusterProfile API to represent clusters.
 * Lay the groundwork for multi-cluster tooling by providing a
   foundational component.
 * Accommodate multiple implementations to encourage flexibility and
@@ -273,6 +293,7 @@ and make progress.
 * Provide a standard reference implementation.
 * Define specific implementation details beyond general API behavior.
 * Offering functionalities related to multi-cluster orchestration.
+* Define the Consumer registration API
 
 
 ## Proposal
@@ -299,22 +320,19 @@ the API proposed by this KEP aims to
   clusters under management.
 
 ### Terminology
+- **Cluster Inventory**: A conceptual term referring to a collection of clusters.
 
-- **Cluster Manager**: An entity that creates the inventory cluster API 
-  object per member cluster, and keeps their status up-to-date. Each
-  cluster manager SHOULD be identified with a unique name. Each cluster
-  inventory resource SHOULD be managed by only one cluster manager. Examples
-  of cluster manager are projects like OCM, Karmada, Clusternet or Azure
-  fleet manager.
+- **Member Cluster**: A kubernetes cluster that is part of a cluster inventory.
 
-- **Inventory Cluster Consumer**: the person running the cluster managers
-  or the person developing extensions for cluster managers for the purpose of
-  workload distribution, operation management etc.
+- **Cluster Manager**: An entity that creates the ClusterProfile API object per member cluster,
+  and keeps their status up-to-date. Each cluster manager MUST be identified with a unique name.
+  Each ClusterProfile resource SHOULD be managed by only one cluster manager. A cluster manager SHOULD
+  have sufficient permission to access the member cluster to fetch the information so it can update the status
+  of the ClusterProfile API resource.
 
-- **Member Cluster**: A kubernetes cluster that is managed by the cluster
-  manager. A cluster manager SHOULD have sufficient permission to access
-  the member cluster to fetch the information so it can update the status
-  of the inventory cluster API resource.
+- **ClusterInventory Consumer**: Controllers or tools that leverage the ClusterProfile for the purpose of
+  workload distribution, operation management etc. Their name must be unique for a single inventory. They 
+  might need to register themselves with the Cluster Manager which is not defined in this KEP. 
 
 ### User Stories (Optional)
 
@@ -379,14 +397,37 @@ command or function to work in the same way in another tool. This can
 further enhance the usability and adoption of different cluster
 manager.
 
-### Notes/Constraints/Caveats (Optional)
+### Notes/Constraints/Caveats
+#### What's the relationship between the ClusterProfile API and Cluster Inventory?
+The ClusterProfile API represents a single member cluster in a cluster inventory.
 
-<!--
-What are the caveats to the proposal?
-What are some important details that didn't come across above?
-Go in to as much detail as necessary here.
-This might be a good place to talk about core concepts and how they relate.
--->
+#### What's the relationship between a cluster inventory and clusterSet?
+A cluster inventory may or may not represent a ClusterSet. A cluster inventory is considered a [clusterSet](https://github.com/kubernetes/enhancements/tree/master/keps/sig-multicluster/1645-multi-cluster-services-api#terminology)
+if all its member clusters adhere to the [namespace sameness](https://github.com/kubernetes/community/blob/master/sig-multicluster/namespace-sameness-position-statement.md) principle.
+Note that a cluster can only be in one ClusterSet while there is not such restriction for a cluster inventory.
+
+#### How should the API be consumed?
+We recommend that all ClusterProfile objects within the same cluster inventory reside on
+a dedicated Kubernetes cluster (aka. the hub cluster). This approach allows consumers to have a single integration 
+point to access all the information within a cluster inventory. Additionally, a multi-cluster aware
+controller can be run on the dedicated  cluster to offer high-level functionalities over this inventory of clusters.
+
+####  How should we organize ClusterProfile objects on a hub cluster?
+While there are no strict requirements, we recommend making the ClusterProfile API a namespace-scoped object.
+This approach allows users to leverage Kubernetes' native namespace-based RBAC if they wish to restrict access to 
+certain clusters within the inventory.
+
+However, if a cluster inventory represents a ClusterSet, all its ClusterProfile objects MUST be part of the same clusterSet
+and namespace must be used as the grouping mechanism. In addition, the namespace must have a label with the key "clusterset.multicluster.x-k8s.io"
+and the value as the name of the clusterSet.
+
+#### Uniqueness of the ClusterProfile object
+While there are no strict requirements, we recommend that there is only one ClusterProfile object representing any member cluster
+on a hub cluster. 
+
+However, a ClusterProfile object can only be in one ClusterSet since the namespace sameness property is transitive, therefore 
+it can only be in the namespace of that clusterSet if it is in a ClusterSet.
+
 
 ### Risks and Mitigations
 
@@ -416,13 +457,14 @@ represent a cluster and support the above use case at the minimum scope.
 
 The target consumers of the API are users who manage the clusters and
 other tools to understand the clusters concept from the API for
-multicluster scheduling, workload distribution and cluster management.
+multi-cluster scheduling, workload distribution and cluster management.
 The API aims to provide the information for the consumers to answer the
 below questions:
 
 * Is the cluster under management?
 * How can I select a cluster?
 * Is the cluster healthy?
+* How to access the cluster?
 * Does the cluster have certain capabilities or properties?
 * Does the cluster have sufficient resources?
 
@@ -430,7 +472,7 @@ below questions:
 
 It is required that cluster name is unique for each cluster, and it
 should also be unique among different providers (cluster manager). It
-is cluster managers's responsibility to ensure the name uniqueness.
+is cluster manager's responsibility to ensure the name uniqueness.
 
 It's the responsibility of the cluster manager platform administrator
 to ensure cluster name uniqueness.
@@ -517,28 +559,61 @@ Predefined condition types:
   The status of the cluster SHOULD be updated by the cluster manager under
   this condition.
 
+### Cluster Access
+There are multiple methods for a ClusterInventory Consumer to gain access to the cluster represented by a ClusterProfile API.
+This KEP does not define the exact mechanism for each approach, but it is recommended that ClusterInventory Consumers avoid 
+using a secret if possible. Here are the three approaches:
+
+#### Pull Model with Work API
+The ClusterInventory Consumer can leverage the [Work API](https://multicluster.sigs.k8s.io/concepts/work-api/) so that
+the work API agent on the Member Cluster can *pull* the necessary objects from the management cluster where the ClusterInventory 
+Consumer operates to the Member Cluster. This approach allows the Cluster Manager to manage the RBAC for each Consumer on the 
+management cluster, ensuring that their access is restricted to the corresponding namespaces of the ClusterProfile objects.
+
+#### Push Model with Identity Federation (Recommended)
+The ClusterInventory consumer can utilize identity federation mechanisms, such as [Azure Workload Identity Federation](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation)
+or [GCP Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation). This allows the 
+ClusterInventory Consumer to use an identity that already has access to the clusters in the Cluster Inventory.
+While the Cluster Manager can assist in setting up the federation, it is not a mandatory requirement.
+
+#### Push Model via Credentials in Secret (Not Recommended)
+The ClusterInventory Consumer can obtain credentials to access the cluster represented by a ClusterProfile object by reading 
+from a secret. In this approach, the Cluster Manager generates secrets containing the necessary credentials within the namespace
+accessible to the ClusterInventory Consumer. For this to function correctly, Cluster Managers must be aware of the following details 
+about the consumer: their name, whether credentials are required, and the preferred unique namespace for reading credentials as secrets.
+Those information can be obtained during the "registering" process but this is out of the scope of this KEP.
+
+##### Secret format
+- The secret *MUST* reside in the namespace with the label `x-k8s.io/cluster-inventory-consumer` with the value being the name of the ClusterInventory Consumer.
+- The secret *MUST* contain the label `x-k8s.io/cluster-profile` with the value being the name of the ClusterProfile object that the secret is associated with.
+- The access information in the secret must contain the following fields
+  - **Config**: This field contains cluster access information compatible with the
+    [kubeconfig format](https://github.com/kubernetes/kubernetes/blob/v1.31.2/staging/src/k8s.io/client-go/tools/clientcmd/api/types.go#L31).
+  - Since a single [Kubeconfig](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/) supports access to multiple clusters, the Cluster manager *MUST* ensure that each secret contains access information for only a single consumer.
+
+
 ## API Example
 
 ```yaml
 apiVersion: multicluster.x-k8s.io/v1alpha1
-kind: InventoryCluster
+kind: ClusterProfile
 metadata:
  name: generated-cluster-name
  labels:
    x-k8s.io/cluster-manager: some-cluster-manager
 spec:
-  displayName: some-cluster
+  displayName: cluster-us-east
   clusterManager:
     name: some-cluster-manager
 status:
- version:
-   kubernetes: 1.28.0
- properties:
+  version:
+    kubernetes: 1.28.0
+  properties:
    - name: clusterset.k8s.io
      value: some-clusterset
    - name: location
      value: apac
- conditions:
+  conditions:
    - type: ControlPlaneHealthy
      status: True
      lastTransitionTime: "2023-05-08T07:56:55Z"
@@ -640,7 +715,7 @@ implementing this enhancement to ensure the enhancements have also solid foundat
 - The API should expose access information including but not limited to:
   - APIServer endpoint url of the member cluster.
   - Credential with limited access to the member cluster.
-- At least two providers and one consumer using inventory cluster API.
+- At least two providers and one consumer using ClusterProfile API.
 
 #### GA
 
@@ -1002,6 +1077,73 @@ What other approaches did you consider, and why did you rule them out? These do
 not need to be as detailed as the proposal, but should include enough
 information to express the idea and why it was not acceptable.
 -->
+
+### Extending Cluster API `Cluster` resource
+We also considered the possibility of extending the existing Cluster API's
+[Cluster](https://github.com/kubernetes-sigs/cluster-api/blob/v1.6.2/api/v1beta1/cluster_types.go#L39)
+resource to accommodate our needs for describing clusters within a multi-cluster
+environment. However, this approach was ruled out due to the Cluster API's primary
+focus on cluster lifecycle management. Its tight coupling with cluster provisioning
+processes made it less suitable for scenarios where clusters are either provisioned
+through different methods or already exist. Furthermore, another distinction is the
+nature of the information each API conveys: the Cluster API's Cluster resource
+outlines the desired state of the cluster. In contrast, the new API is intended to
+reflect the actual state of the cluster, more similar to the Cluster.status in the
+Cluster API, but with a broader scope and intended for use in a multi-cluster context.
+This distinction also extends to the ownership of the resources; the Cluster API's
+Cluster is primarily owned by platform administrators focused on provisioning clusters,
+whereas the new API is designed to be owned by the cluster manager that created the
+cluster it represents.
+
+### ClusterProfile CRD scope
+
+We had [extensive discussions](https://docs.google.com/document/d/1E_z3ti-d-modwnhsvR3yBZwX4rRpL26dKkl41YAptRo/edit)
+in SIG-Multicluster meetings about the appropriate scope for ClusterProfile
+resources, and ultimately decided that namespace scope would be more flexible
+than cluster scope while still retaining an adequate UX for simpler usage
+patterns. As a historical note, a prior attempt at organizing multiple
+clusters, the ClusterRegistry proposal, had proposed cluster-scoped resources
+but was met with pushback by potential adopters in part due to a desire to host
+multiple distinct registry lists on a single control plane, which would be far
+more straightforward with namespaced resources.
+
+#### Global hub cluster for multiple clustersets
+
+![illustration of global hub for multiple clustersets topology](./global-hub.svg)
+
+In this model, a single global hub cluster is used to manage multiple clustersets (a "Prod" clusterset and "Dev" clusterset in this illustration). For this use case, some means of segmenting the ClusterProfile resources into distinct groups for each clusterset is needed, and ideally should facilitate selecting all ClusterProfiles of a given clusterset. Because of this selection-targeting goal, setting clusterset membership within the `spec` of a ClusterProfile would not be sufficient. While setting a label such as the proposed `clusterset.multicluster.x-k8s.io` on the ClusterProfile resource (instead of a namespace) could be acceptable, managing multiple cluster-scoped ClusterProfile resources for multiple unrelated clustersets on a single global hub could quickly get cluttered. In addition to grouping clarity, namespace scoping could allow RBAC delegation for separate teams to manage resources for their own clustersets in isolation while still using a shared hub. The group of all clusters registered on the hub (potentially including clusters belonging to different clustersets or clusters not belonging to any clusterset) may represent a single "inventory" or multiple inventories, but such a definition is beyond the scope of this document and is permissible to be an undefined implementation detail.
+
+#### Global hub cluster per clusterset
+
+![illustration of global hub per clusterset topology](./global-hub-per-clusterset.svg)
+
+In this model, each "inventory" has a 1:1 mapping with a clusterset containing clusters in multiple regions. A cluster-scoped ClusterProfile CRD would be sufficient for this architecture, but it requires a proliferation of hub clusters, which may not be optimal. This model is still implementable with namespace-scoped ClusterProfile CRDs by writing them all to a single namespace, either the `default` namespace or a specific namespace configured in the cluster manager. The risk of placing resources in the wrong namespace would be somewhat minimal if following the suggested pattern of having ClusterProfile resources be written by a "manager" rather than authored by humans.
+
+#### Regional hub cluster for multiple clustersets
+
+![illustration of regional hub clusters for multiple clustersets topology](./regional-hub-multiple-clustersets.svg)
+
+In this model, "hub" clusters are limited to a regional scope (potentially for architectural limitations or performance optimizations) and each hub is used to manage clusters only from the local region, but which may belong to separate clustersets. If, as in the pictured example, clustersets still span multiple regions, some out-of-band synchronization mechanism between the regional hubs would likely be needed. This model has similar segmentation needs to the global hub model, just at a smaller scale.
+
+#### Regional hub clusters per clusterset
+
+![illustration of regional hub clusters per clusterset topology](./regional-hub-per-clusterset.svg)
+
+This is creeping pretty far towards excessive cluster proliferation (and cross-region coordination overhead) purely for management needs (as opposed to actually running workloads), and would be more likely to be a reference or testing implementation than an architecture suitable for production scale.
+
+#### Self-assembling clustersets
+
+![illustration of self-assembling clusterset topology](./self-assembling-clustersets.svg)
+
+This is the model most suited to a cluster-scoped ClusterProfile resource. In contrast to the prior models discussed, in this approach the ClusterProfile CRD would be written directly to each "member" cluster. ClusterSet membership would either be established through peer-to-peer relationships, or managed by an external control plane. For ClusterSet security and integrity, a two-way handshake of some sort would be needed between the local cluster and each peer or the external control plane to ensure it is properly authorized to serve endpoints for exported services or import services from other clusters. While these approaches could be implemented with a namespace-scoped ClusterProfile CRD in the `default` or a designated namespace, misuse is most likely in this model, because the resource would be more likely to be authored by a human if using the peer-to-peer model. Due to the complexity and fragility concerns of managing clusterset membership in a peer-to-peer topology, an external control plane would likely be preferable. Assuming the external control plane does not support Kubernetes APIs (if it did, any of the "hub" models could be applied instead), it could still be possible to implement this model with a namespace-scoped ClusterProfile resource, but it is _not_ recommended.
+
+#### Workload placement across multiple clusters _without_ cross-cluster service networking
+
+In this model, a consumer of the Cluster Inventory API is looking to optimize workload placement to take advantage of excess capacity on existing managed clusters. These workloads may have specific hardware resource needs such as GPUs, but are typically "batch" jobs that do not require multi-cluster service networking to communicate with known services in a specific clusterset. The isolated nature of these jobs could allow them to be scheduled on many known clusters regardless of clusterset membership. A centralized hub which could register clusters in disparate clustersets or no clusterset and return a list of all known clusters from a single API call would be the most efficient for this consumer to query. Namespaced ClusterProfile CRDs on a global hub would be the best fit for this use case.
+
+#### Workload placement into a specific clusterset
+
+Within a single clusterset, a global workload placement controller may seek to balance capacity across multiple regions in response to demand, cost efficiency, or other factors. Querying a list of all clusters within a single clusterset should be possible to serve this use case, which is amenable to either cluster-scoped or namespaced-scoped ClusterProfile CRDs.
 
 ## Infrastructure Needed (Optional)
 
